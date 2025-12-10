@@ -1,0 +1,5 @@
+{
+  "name": "SAPC Audit System",
+  "description": "Interactive Accounts Receivable Audit System featuring AI-driven anomaly detection, document verification, and generative reporting.",
+  "requestFramePermissions": []
+}
