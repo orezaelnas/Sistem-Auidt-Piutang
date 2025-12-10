@@ -1,39 +1,574 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SAPC Audit System</title>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons (Lucide) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Chart.js (Replacement for Recharts) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Markdown Parser (Replacement for react-markdown) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
     <style>
-      body {
-        font-family: 'Inter', sans-serif;
-      }
-      /* Custom scrollbar for chat */
-      .scrollbar-hide::-webkit-scrollbar {
-          display: none;
-      }
-      .scrollbar-hide {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-      }
+        body { font-family: 'Inter', sans-serif; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        /* Loader Animation */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 3px solid #3b82f6;
+            width: 20px;
+            height: 20px;
+            -webkit-animation: spin 1s linear infinite; /* Safari */
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.32.0",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
     "react/": "https://aistudiocdn.com/react@^19.2.1/",
-    "react": "https://aistudiocdn.com/react@^19.2.1",
-    "react-markdown": "https://aistudiocdn.com/react-markdown@^10.1.0",
-    "recharts": "https://aistudiocdn.com/recharts@^3.5.1"
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.32.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
+    "recharts": "https://aistudiocdn.com/recharts@^3.5.1",
+    "react-markdown": "https://aistudiocdn.com/react-markdown@^10.1.0"
   }
 }
 </script>
 </head>
-  <body class="bg-slate-50 text-slate-900">
-    <div id="root"></div>
-  </body>
+<body class="bg-slate-50 text-slate-900 overflow-hidden h-screen w-screen flex">
+
+    <!-- Sidebar Container -->
+    <div id="sidebar-container"></div>
+
+    <!-- Main Content -->
+    <main class="flex-1 h-full overflow-hidden relative flex flex-col">
+        <div id="app-content" class="h-full overflow-y-auto"></div>
+    </main>
+
+    <!-- MODULE SCRIPT: Logic Application -->
+    <script type="module">
+        import { GoogleGenAI } from "https://esm.run/@google/genai";
+
+        // ==========================================
+        // CONFIGURATION
+        // ==========================================
+        
+        // TODO: REPLACE THIS WITH YOUR ACTUAL GEMINI API KEY FOR THE STATIC FILE
+        // Since this is a client-side static file, process.env isn't available by default.
+        const API_KEY = "YOUR_GEMINI_API_KEY_HERE"; 
+
+        const getAI = () => {
+            if (!API_KEY || API_KEY === "YOUR_GEMINI_API_KEY_HERE") {
+                alert("Please set your API Key in the source code (line 62) to use AI features.");
+                throw new Error("API Key missing");
+            }
+            return new GoogleGenAI({ apiKey: API_KEY });
+        };
+
+        // ==========================================
+        // STATE MANAGEMENT
+        // ==========================================
+        const state = {
+            activeTab: 'dashboard',
+            transactions: [
+                { id: 'TXN-001', date: '2024-11-15', customer: 'Acme Corp', amount: 5000.00, description: 'Consulting Services', riskScore: 10 },
+                { id: 'TXN-002', date: '2024-12-24', customer: 'Globex Inc', amount: 9999.00, description: 'Software License', riskScore: 0 },
+                { id: 'TXN-003', date: '2024-12-31', customer: 'Soylent Corp', amount: 250000.00, description: 'Bulk Purchase', riskScore: 0 },
+                { id: 'TXN-004', date: '2024-12-30', customer: 'Initech', amount: 1234.56, description: 'Office Supplies', riskScore: 0 },
+                { id: 'TXN-005', date: '2025-01-02', customer: 'Umbrella Corp', amount: 5000.00, description: 'Medical Supplies', riskScore: 0 },
+                { id: 'TXN-006', date: '2024-12-25', customer: 'Cyberdyne', amount: 50000.00, description: 'R&D Hardware', riskScore: 0 },
+            ],
+            documents: [],
+            report: "",
+            chatHistory: [],
+            isAnalyzing: false,
+            isProcessingDoc: false,
+            isGeneratingReport: false,
+            isChatting: false
+        };
+
+        // ==========================================
+        // UTILS
+        // ==========================================
+        const cleanJsonString = (str) => {
+            let cleaned = str.trim();
+            if (cleaned.startsWith('```json')) cleaned = cleaned.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+            else if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```\s*/, '').replace(/\s*```$/, '');
+            return cleaned;
+        };
+
+        const formatCurrency = (amount) => {
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+        };
+
+        const fileToBase64 = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = (error) => reject(error);
+            });
+        };
+
+        // ==========================================
+        // GEMINI SERVICES
+        // ==========================================
+        async function analyzeRiskAnomalies() {
+            try {
+                const ai = getAI();
+                const model = 'gemini-2.5-flash';
+                const prompt = `
+                    Act as an Accounts Receivable Audit Risk Model.
+                    Analyze the following list of transactions for anomalies.
+                    Look for: 1. Round number amounts. 2. Weekend postings. 3. High values. 4. Duplicate amounts.
+                    Return the SAME list of transactions but update the 'riskScore' (0-100) and 'riskReason' fields.
+                    Output JSON only.
+                    Input Data: ${JSON.stringify(state.transactions.map(t => ({ id: t.id, date: t.date, amount: t.amount, customer: t.customer, description: t.description })))}
+                `;
+
+                const response = await ai.models.generateContent({
+                    model,
+                    contents: prompt,
+                    config: { responseMimeType: "application/json" }
+                });
+
+                const text = response.text;
+                if (!text) return;
+                state.transactions = JSON.parse(cleanJsonString(text));
+            } catch (error) {
+                console.error("Risk Analysis Error:", error);
+                alert("AI Analysis Failed: " + error.message);
+            }
+        }
+
+        async function extractDocumentData(base64, mimeType) {
+            const ai = getAI();
+            const model = 'gemini-2.5-flash';
+            const prompt = `
+                Extract fields from this invoice/delivery note:
+                - Invoice Number
+                - Invoice Date (YYYY-MM-DD)
+                - Delivery Date (YYYY-MM-DD)
+                - Total Amount (number)
+                - Customer Name
+                - Document Type (Invoice/Delivery Note/Unknown)
+                Return JSON.
+            `;
+            
+            const response = await ai.models.generateContent({
+                model,
+                contents: {
+                    parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }]
+                },
+                config: { responseMimeType: "application/json" }
+            });
+
+            return JSON.parse(cleanJsonString(response.text));
+        }
+
+        async function generateAuditSummary() {
+            const ai = getAI();
+            const model = 'gemini-3-pro-preview';
+            const highRisk = state.transactions.filter(t => t.riskScore > 70);
+            
+            const prompt = `
+                Act as Senior Audit Manager. Write a concise Audit Executive Summary and Draft Journal Entries.
+                ANOMALIES: ${JSON.stringify(highRisk)}
+                DOC FINDINGS: ${JSON.stringify(state.documents.map(d => ({file: d.fileName, notes: d.notes, passed: d.cutOffTestPassed})))}
+                
+                Structure:
+                1. Executive Summary
+                2. Key Findings
+                3. Recommended Adjustments (Journal Entries)
+                4. Conclusion
+                Format in Markdown.
+            `;
+
+            const response = await ai.models.generateContent({ model, contents: prompt });
+            return response.text;
+        }
+
+        async function chatWithAuditor(message) {
+            const ai = getAI();
+            const contextData = `
+                Trans Count: ${state.transactions.length}, 
+                High Risk: ${state.transactions.filter(t => t.riskScore > 70).length},
+                Docs: ${state.documents.length}
+            `;
+            
+            // Build history string for context
+            const historyStr = state.chatHistory.map(m => `${m.role}: ${m.text}`).join('\n');
+            
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: `Context: ${contextData}\nHistory:\n${historyStr}\nUser: ${message}\nModel:`
+            });
+            return response.text;
+        }
+
+        // ==========================================
+        // UI RENDERERS
+        // ==========================================
+        
+        function renderSidebar() {
+            const container = document.getElementById('sidebar-container');
+            const items = [
+                { id: 'dashboard', label: 'Anomaly Dashboard', icon: 'layout-dashboard' },
+                { id: 'documents', label: 'Doc Verification', icon: 'file-search' },
+                { id: 'reporting', label: 'Audit Assistant', icon: 'bot' },
+            ];
+
+            const navHtml = items.map(item => `
+                <button onclick="window.switchTab('${item.id}')"
+                    class="w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+                        state.activeTab === item.id 
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' 
+                        : 'hover:bg-slate-800 hover:text-white'
+                    }">
+                    <i data-lucide="${item.icon}" width="20"></i>
+                    <span class="font-medium">${item.label}</span>
+                </button>
+            `).join('');
+
+            container.innerHTML = `
+                <div class="w-64 bg-slate-900 text-slate-300 flex flex-col h-full border-r border-slate-800">
+                    <div class="p-6 border-b border-slate-800">
+                        <h1 class="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                            <i data-lucide="file-text" class="text-blue-500"></i> SAPC Audit
+                        </h1>
+                        <p class="text-xs text-slate-500 mt-1">AI-Powered AR Analysis</p>
+                    </div>
+                    <nav class="flex-1 p-4 space-y-2">${navHtml}</nav>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function renderDashboard() {
+            const highRisk = state.transactions.filter(t => t.riskScore > 75).length;
+            const mediumRisk = state.transactions.filter(t => t.riskScore > 30 && t.riskScore <= 75).length;
+            const lowRisk = state.transactions.filter(t => t.riskScore <= 30).length;
+            const sorted = [...state.transactions].sort((a, b) => b.riskScore - a.riskScore).slice(0, 5);
+
+            const html = `
+                <div class="p-8 space-y-8">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h2 class="text-2xl font-bold text-slate-900">Anomaly Detection Dashboard</h2>
+                            <p class="text-slate-500">Predictive risk scoring of Accounts Receivable ledger</p>
+                        </div>
+                        <button onclick="window.runAnalysis()" 
+                            class="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md ${state.isAnalyzing ? 'opacity-50 cursor-not-allowed' : ''}">
+                            ${state.isAnalyzing ? '<div class="loader"></div>' : '<i data-lucide="alert-octagon" width="20"></i>'}
+                            ${state.isAnalyzing ? 'Running Models...' : 'Run Risk Assessment'}
+                        </button>
+                    </div>
+
+                    <!-- Stats Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+                            <div class="p-3 bg-red-100 text-red-600 rounded-lg"><i data-lucide="alert-triangle"></i></div>
+                            <div><p class="text-sm font-medium text-slate-500">High Risk</p><h3 class="text-3xl font-bold">${highRisk}</h3></div>
+                        </div>
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+                            <div class="p-3 bg-green-100 text-green-600 rounded-lg"><i data-lucide="check-circle"></i></div>
+                            <div><p class="text-sm font-medium text-slate-500">Safe</p><h3 class="text-3xl font-bold">${lowRisk}</h3></div>
+                        </div>
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+                            <div class="p-3 bg-blue-100 text-blue-600 rounded-lg"><i data-lucide="refresh-cw"></i></div>
+                            <div><p class="text-sm font-medium text-slate-500">Analyzed</p><h3 class="text-3xl font-bold">${state.transactions.length}</h3></div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <!-- Chart -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-[400px]">
+                            <h3 class="text-lg font-semibold mb-6">Risk Distribution</h3>
+                            <div class="h-64 flex justify-center"><canvas id="riskChart"></canvas></div>
+                        </div>
+
+                        <!-- List -->
+                        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                            <h3 class="text-lg font-semibold mb-4">Top Risk Factors Detected</h3>
+                            <div class="space-y-4">
+                                ${sorted.map(tx => `
+                                    <div class="flex items-start gap-4 p-4 rounded-lg bg-slate-50 border border-slate-100">
+                                        <div class="mt-1 w-2 h-2 rounded-full ${tx.riskScore > 75 ? 'bg-red-500' : 'bg-orange-400'}"></div>
+                                        <div class="flex-1">
+                                            <div class="flex justify-between">
+                                                <span class="font-semibold text-slate-900">${tx.customer}</span>
+                                                <span class="font-mono text-slate-600">${formatCurrency(tx.amount)}</span>
+                                            </div>
+                                            <p class="text-sm text-slate-500 mt-1">${tx.description}</p>
+                                            ${tx.riskReason ? `<div class="mt-2 text-xs font-medium text-red-600 bg-red-50 px-2 py-1 rounded inline-block">${tx.riskReason}</div>` : ''}
+                                        </div>
+                                        <div class="text-right">
+                                            <span class="text-lg font-bold ${tx.riskScore > 75 ? 'text-red-600' : 'text-orange-500'}">${tx.riskScore}</span>
+                                            <span class="block text-xs text-slate-400">Score</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('app-content').innerHTML = html;
+            lucide.createIcons();
+
+            // Render Chart
+            const ctx = document.getElementById('riskChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['High Risk', 'Medium Risk', 'Low Risk'],
+                    datasets: [{
+                        data: [highRisk, mediumRisk, lowRisk],
+                        backgroundColor: ['#ef4444', '#f59e0b', '#10b981'],
+                        borderWidth: 0
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        }
+
+        function renderDocuments() {
+            const html = `
+                <div class="p-8 h-full">
+                    <div class="mb-8">
+                        <h2 class="text-2xl font-bold text-slate-900">Document Verification Module</h2>
+                        <p class="text-slate-500">Automated cut-off testing using Document AI</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <!-- Upload -->
+                        <div class="lg:col-span-1">
+                            <div id="drop-zone" class="h-64 border-2 border-dashed rounded-xl flex flex-col items-center justify-center p-6 text-center transition-colors border-slate-300 hover:border-blue-500 hover:bg-blue-50 cursor-pointer"
+                                onclick="document.getElementById('file-upload').click()">
+                                ${state.isProcessingDoc ? 
+                                    `<div class="loader mb-4 text-blue-600"></div><p class="text-slate-600">Extracting data...</p>` : 
+                                    `<div class="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4"><i data-lucide="upload" width="32"></i></div>
+                                     <p class="text-slate-700 font-medium mb-2">Click to Upload Invoice</p>`
+                                }
+                            </div>
+                            <input type="file" id="file-upload" class="hidden" accept="image/*" onchange="window.handleFileSelect(this)">
+                            
+                            <div class="mt-6 bg-blue-50 p-4 rounded-lg border border-blue-100">
+                                <h4 class="font-semibold text-blue-900 text-sm mb-2">Testing Parameters</h4>
+                                <ul class="text-xs text-blue-800 space-y-1 list-disc list-inside">
+                                    <li>Fiscal Year End: <strong>31 Dec 2024</strong></li>
+                                    <li>Doc Type: Invoice, Delivery Note</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <!-- List -->
+                        <div class="lg:col-span-2 space-y-4">
+                            ${state.documents.length === 0 ? 
+                                `<div class="text-center py-12 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400">No documents processed yet.</div>` : 
+                                state.documents.map(doc => `
+                                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-6">
+                                        <div class="flex-1">
+                                            <div class="flex items-center gap-2 mb-2">
+                                                <i data-lucide="file-text" width="18" class="text-slate-400"></i>
+                                                <span class="font-medium text-slate-900">${doc.fileName}</span>
+                                            </div>
+                                            ${doc.extraction ? `
+                                                <div class="grid grid-cols-2 gap-x-8 gap-y-2 text-sm mt-3">
+                                                    <div><span class="text-slate-500 text-xs">Invoice #</span> <span class="font-medium block">${doc.extraction.invoiceNumber || 'N/A'}</span></div>
+                                                    <div><span class="text-slate-500 text-xs">Customer</span> <span class="font-medium block">${doc.extraction.customerName || 'N/A'}</span></div>
+                                                    <div><span class="text-slate-500 text-xs">Inv Date</span> <span class="font-medium block">${doc.extraction.invoiceDate || 'N/A'}</span></div>
+                                                    <div><span class="text-slate-500 text-xs">Del Date</span> <span class="font-medium block">${doc.extraction.deliveryDate || 'N/A'}</span></div>
+                                                    <div class="col-span-2 mt-1 pt-1 border-t border-slate-100"><span class="font-bold">${formatCurrency(doc.extraction.totalAmount || 0)}</span></div>
+                                                </div>
+                                            ` : '<p class="text-red-500 text-sm">Extraction failed</p>'}
+                                        </div>
+                                        <div class="w-full md:w-48 p-4 rounded-lg flex flex-col justify-center items-center text-center ${doc.cutOffTestPassed ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
+                                            <i data-lucide="${doc.cutOffTestPassed ? 'check' : 'x'}" width="32" class="mb-2"></i>
+                                            <span class="font-bold text-sm block">${doc.cutOffTestPassed ? 'Cut-off OK' : 'Cut-off Risk'}</span>
+                                            <p class="text-xs mt-1 opacity-80">${doc.notes}</p>
+                                        </div>
+                                    </div>
+                                `).join('')
+                            }
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('app-content').innerHTML = html;
+            lucide.createIcons();
+        }
+
+        function renderReporting() {
+            const chatHtml = state.chatHistory.map(msg => `
+                <div class="flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-slate-200' : 'bg-indigo-100 text-indigo-600'}">
+                        <i data-lucide="${msg.role === 'user' ? 'user' : 'bot'}" width="16"></i>
+                    </div>
+                    <div class="p-3 rounded-lg text-sm max-w-[80%] ${msg.role === 'user' ? 'bg-slate-800 text-white rounded-tr-none' : 'bg-slate-100 text-slate-800 rounded-tl-none'}">
+                        ${marked.parse(msg.text)}
+                    </div>
+                </div>
+            `).join('');
+
+            const html = `
+                <div class="flex h-full bg-slate-50">
+                    <!-- Report -->
+                    <div class="flex-1 p-8 overflow-y-auto border-r border-slate-200">
+                        <div class="flex justify-between items-center mb-6">
+                            <div>
+                                <h2 class="text-2xl font-bold text-slate-900">Generative Reporting</h2>
+                                <p class="text-slate-500">Draft findings and journals using GenAI</p>
+                            </div>
+                            <button onclick="window.generateReport()" 
+                                class="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-md ${state.isGeneratingReport ? 'opacity-50' : ''}">
+                                ${state.isGeneratingReport ? '<div class="loader text-white"></div>' : '<i data-lucide="file-output" width="20"></i>'}
+                                ${state.isGeneratingReport ? 'Drafting...' : 'Generate Audit Draft'}
+                            </button>
+                        </div>
+                        ${state.report ? 
+                            `<div class="prose prose-slate max-w-none bg-white p-8 rounded-xl shadow-sm border border-slate-200">${marked.parse(state.report)}</div>` : 
+                            `<div class="flex flex-col items-center justify-center h-[60vh] text-slate-400">
+                                <i data-lucide="file-output" width="64" class="mb-4 opacity-20"></i>
+                                <p class="text-lg">Click "Generate Audit Draft"</p>
+                             </div>`
+                        }
+                    </div>
+
+                    <!-- Chat -->
+                    <div class="w-[400px] flex flex-col bg-white border-l border-slate-200">
+                        <div class="p-4 border-b border-slate-100 bg-slate-50">
+                            <h3 class="font-semibold text-slate-800 flex items-center gap-2"><i data-lucide="bot" class="text-indigo-600"></i> Audit Assistant</h3>
+                        </div>
+                        <div id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-4">
+                            ${chatHtml}
+                            ${state.isChatting ? `<div class="flex gap-3"><div class="loader text-indigo-600"></div></div>` : ''}
+                        </div>
+                        <div class="p-4 border-t border-slate-100 relative">
+                            <input type="text" id="chat-input" placeholder="Ask about findings..." 
+                                class="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                                onkeypress="if(event.key === 'Enter') window.sendChat()">
+                            <button onclick="window.sendChat()" class="absolute right-6 top-6 text-indigo-600"><i data-lucide="send" width="16"></i></button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('app-content').innerHTML = html;
+            lucide.createIcons();
+            // Scroll chat to bottom
+            const chatContainer = document.getElementById('chat-container');
+            if(chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function render() {
+            renderSidebar();
+            if (state.activeTab === 'dashboard') renderDashboard();
+            else if (state.activeTab === 'documents') renderDocuments();
+            else if (state.activeTab === 'reporting') renderReporting();
+        }
+
+        // ==========================================
+        // EXPOSED WINDOW FUNCTIONS (Event Handlers)
+        // ==========================================
+
+        window.switchTab = (tab) => {
+            state.activeTab = tab;
+            render();
+        };
+
+        window.runAnalysis = async () => {
+            if(state.isAnalyzing) return;
+            state.isAnalyzing = true;
+            render(); // show loader
+            await analyzeRiskAnomalies();
+            state.isAnalyzing = false;
+            render();
+        };
+
+        window.handleFileSelect = async (input) => {
+            if (input.files && input.files[0]) {
+                const file = input.files[0];
+                state.isProcessingDoc = true;
+                render(); // show loader in drop zone
+
+                try {
+                    const base64 = await fileToBase64(file);
+                    const extracted = await extractDocumentData(base64, file.type);
+                    
+                    // Logic Logic
+                    const fyEnd = new Date('2024-12-31').getTime();
+                    let passed = true;
+                    let notes = "Verified.";
+                    
+                    if (extracted.invoiceDate && extracted.deliveryDate) {
+                        const invDate = new Date(extracted.invoiceDate).getTime();
+                        const delDate = new Date(extracted.deliveryDate).getTime();
+                        if (invDate > fyEnd && delDate <= fyEnd) { passed = false; notes = "Potential Cut-off Error."; }
+                        else if (invDate <= fyEnd && delDate > fyEnd) { passed = false; notes = "Potential Cut-off Error."; }
+                    } else { notes = "Dates missing."; passed = false; }
+
+                    state.documents.unshift({
+                        id: Math.random().toString(36),
+                        fileName: file.name,
+                        uploadedAt: new Date().toLocaleTimeString(),
+                        extraction: extracted,
+                        cutOffTestPassed: passed,
+                        notes
+                    });
+                } catch (e) {
+                    alert("Error processing file");
+                }
+                
+                state.isProcessingDoc = false;
+                render();
+            }
+        };
+
+        window.generateReport = async () => {
+            state.isGeneratingReport = true;
+            render();
+            const summary = await generateAuditSummary();
+            state.report = summary;
+            state.isGeneratingReport = false;
+            render();
+        };
+
+        window.sendChat = async () => {
+            const input = document.getElementById('chat-input');
+            const msg = input.value;
+            if(!msg) return;
+            
+            state.chatHistory.push({ role: 'user', text: msg });
+            state.isChatting = true;
+            input.value = '';
+            render(); // update chat UI
+
+            const response = await chatWithAuditor(msg);
+            state.chatHistory.push({ role: 'model', text: response });
+            state.isChatting = false;
+            render();
+        };
+
+        // INITIAL RENDER
+        render();
+    </script>
+</body>
 </html>
