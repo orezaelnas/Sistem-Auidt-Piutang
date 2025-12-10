@@ -63,25 +63,99 @@
         <div id="app-content" class="h-full overflow-y-auto"></div>
     </main>
 
+    <!-- API Key Modal -->
+    <div id="api-key-modal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-slate-200">
+            <div class="flex items-center gap-3 mb-4 text-slate-800">
+                <div class="p-2 bg-blue-100 rounded-lg text-blue-600">
+                    <i data-lucide="key" width="24"></i>
+                </div>
+                <h2 class="text-xl font-bold">Set Gemini API Key</h2>
+            </div>
+            
+            <p class="text-slate-500 text-sm mb-4">
+                To use the AI features (Anomaly Detection, Doc Verification, Reporting), you need to provide your own Google Gemini API Key.
+            </p>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-slate-700 mb-1">API Key</label>
+                    <input type="password" id="api-key-input" placeholder="Paste your key here (starts with AIza...)" 
+                        class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-mono">
+                </div>
+                
+                <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs text-slate-500">
+                    <p class="mb-1"><strong>Note:</strong> Your key is stored locally in your browser (localStorage). It is never sent to our servers.</p>
+                    <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-600 hover:underline flex items-center gap-1 mt-2">
+                        Get a free API Key here <i data-lucide="external-link" width="12"></i>
+                    </a>
+                </div>
+
+                <div class="flex gap-3 justify-end pt-2">
+                    <button id="cancel-api-btn" onclick="window.hideApiKeyModal()" class="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium hidden">Cancel</button>
+                    <button onclick="window.saveApiKey()" class="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-sm font-medium flex items-center gap-2">
+                        <span>Save & Continue</span>
+                        <i data-lucide="arrow-right" width="16"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- MODULE SCRIPT: Logic Application -->
     <script type="module">
         import { GoogleGenAI } from "https://esm.run/@google/genai";
 
         // ==========================================
-        // CONFIGURATION
+        // CONFIGURATION & API KEY MANAGEMENT
         // ==========================================
-        
-        // TODO: REPLACE THIS WITH YOUR ACTUAL GEMINI API KEY FOR THE STATIC FILE
-        // Since this is a client-side static file, process.env isn't available by default.
-        const API_KEY = "YOUR_GEMINI_API_KEY_HERE"; 
+        const STORAGE_KEY = 'gemini_api_key';
+
+        window.saveApiKey = () => {
+            const input = document.getElementById('api-key-input');
+            const key = input.value.trim();
+            if (!key) {
+                alert("Please enter a valid API Key.");
+                return;
+            }
+            localStorage.setItem(STORAGE_KEY, key);
+            window.hideApiKeyModal();
+            // Reload sidebar to update settings state if needed, or just notify
+            // alert("API Key saved successfully!");
+        };
+
+        window.showApiKeyModal = (canCancel = true) => {
+            const modal = document.getElementById('api-key-modal');
+            const cancelBtn = document.getElementById('cancel-api-btn');
+            const input = document.getElementById('api-key-input');
+            
+            input.value = localStorage.getItem(STORAGE_KEY) || '';
+            
+            if (canCancel) {
+                cancelBtn.classList.remove('hidden');
+            } else {
+                cancelBtn.classList.add('hidden');
+            }
+            modal.classList.remove('hidden');
+        };
+
+        window.hideApiKeyModal = () => {
+            document.getElementById('api-key-modal').classList.add('hidden');
+        };
 
         const getAI = () => {
-            if (!API_KEY || API_KEY === "YOUR_GEMINI_API_KEY_HERE") {
-                alert("Please set your API Key in the source code (line 62) to use AI features.");
-                throw new Error("API Key missing");
+            const apiKey = localStorage.getItem(STORAGE_KEY);
+            if (!apiKey) {
+                window.showApiKeyModal(false); // Force modal, cannot cancel
+                throw new Error("API Key missing. Please provide it in the settings.");
             }
-            return new GoogleGenAI({ apiKey: API_KEY });
+            return new GoogleGenAI({ apiKey });
         };
+
+        // Check for API Key on load
+        if (!localStorage.getItem(STORAGE_KEY)) {
+            window.showApiKeyModal(false);
+        }
 
         // ==========================================
         // STATE MANAGEMENT
@@ -155,73 +229,98 @@
                 state.transactions = JSON.parse(cleanJsonString(text));
             } catch (error) {
                 console.error("Risk Analysis Error:", error);
-                alert("AI Analysis Failed: " + error.message);
+                if (error.message.includes("API Key missing")) {
+                    window.showApiKeyModal(false);
+                } else {
+                    alert("AI Analysis Failed: " + error.message);
+                }
             }
         }
 
         async function extractDocumentData(base64, mimeType) {
-            const ai = getAI();
-            const model = 'gemini-2.5-flash';
-            const prompt = `
-                Extract fields from this invoice/delivery note:
-                - Invoice Number
-                - Invoice Date (YYYY-MM-DD)
-                - Delivery Date (YYYY-MM-DD)
-                - Total Amount (number)
-                - Customer Name
-                - Document Type (Invoice/Delivery Note/Unknown)
-                Return JSON.
-            `;
-            
-            const response = await ai.models.generateContent({
-                model,
-                contents: {
-                    parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }]
-                },
-                config: { responseMimeType: "application/json" }
-            });
+            try {
+                const ai = getAI();
+                const model = 'gemini-2.5-flash';
+                const prompt = `
+                    Extract fields from this invoice/delivery note:
+                    - Invoice Number
+                    - Invoice Date (YYYY-MM-DD)
+                    - Delivery Date (YYYY-MM-DD)
+                    - Total Amount (number)
+                    - Customer Name
+                    - Document Type (Invoice/Delivery Note/Unknown)
+                    Return JSON.
+                `;
+                
+                const response = await ai.models.generateContent({
+                    model,
+                    contents: {
+                        parts: [{ inlineData: { mimeType, data: base64 } }, { text: prompt }]
+                    },
+                    config: { responseMimeType: "application/json" }
+                });
 
-            return JSON.parse(cleanJsonString(response.text));
+                return JSON.parse(cleanJsonString(response.text));
+            } catch (error) {
+                if (error.message.includes("API Key missing")) {
+                    window.showApiKeyModal(false);
+                }
+                throw error;
+            }
         }
 
         async function generateAuditSummary() {
-            const ai = getAI();
-            const model = 'gemini-3-pro-preview';
-            const highRisk = state.transactions.filter(t => t.riskScore > 70);
-            
-            const prompt = `
-                Act as Senior Audit Manager. Write a concise Audit Executive Summary and Draft Journal Entries.
-                ANOMALIES: ${JSON.stringify(highRisk)}
-                DOC FINDINGS: ${JSON.stringify(state.documents.map(d => ({file: d.fileName, notes: d.notes, passed: d.cutOffTestPassed})))}
+            try {
+                const ai = getAI();
+                const model = 'gemini-3-pro-preview';
+                const highRisk = state.transactions.filter(t => t.riskScore > 70);
                 
-                Structure:
-                1. Executive Summary
-                2. Key Findings
-                3. Recommended Adjustments (Journal Entries)
-                4. Conclusion
-                Format in Markdown.
-            `;
+                const prompt = `
+                    Act as Senior Audit Manager. Write a concise Audit Executive Summary and Draft Journal Entries.
+                    ANOMALIES: ${JSON.stringify(highRisk)}
+                    DOC FINDINGS: ${JSON.stringify(state.documents.map(d => ({file: d.fileName, notes: d.notes, passed: d.cutOffTestPassed})))}
+                    
+                    Structure:
+                    1. Executive Summary
+                    2. Key Findings
+                    3. Recommended Adjustments (Journal Entries)
+                    4. Conclusion
+                    Format in Markdown.
+                `;
 
-            const response = await ai.models.generateContent({ model, contents: prompt });
-            return response.text;
+                const response = await ai.models.generateContent({ model, contents: prompt });
+                return response.text;
+            } catch (error) {
+                if (error.message.includes("API Key missing")) {
+                    window.showApiKeyModal(false);
+                }
+                throw error;
+            }
         }
 
         async function chatWithAuditor(message) {
-            const ai = getAI();
-            const contextData = `
-                Trans Count: ${state.transactions.length}, 
-                High Risk: ${state.transactions.filter(t => t.riskScore > 70).length},
-                Docs: ${state.documents.length}
-            `;
-            
-            // Build history string for context
-            const historyStr = state.chatHistory.map(m => `${m.role}: ${m.text}`).join('\n');
-            
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: `Context: ${contextData}\nHistory:\n${historyStr}\nUser: ${message}\nModel:`
-            });
-            return response.text;
+            try {
+                const ai = getAI();
+                const contextData = `
+                    Trans Count: ${state.transactions.length}, 
+                    High Risk: ${state.transactions.filter(t => t.riskScore > 70).length},
+                    Docs: ${state.documents.length}
+                `;
+                
+                const historyStr = state.chatHistory.map(m => `${m.role}: ${m.text}`).join('\n');
+                
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: `Context: ${contextData}\nHistory:\n${historyStr}\nUser: ${message}\nModel:`
+                });
+                return response.text;
+            } catch (error) {
+                if (error.message.includes("API Key missing")) {
+                    window.showApiKeyModal(false);
+                    return "Please enter your API Key to continue.";
+                }
+                throw error;
+            }
         }
 
         // ==========================================
@@ -248,6 +347,7 @@
                 </button>
             `).join('');
 
+            // Added onclick handler to Settings button
             container.innerHTML = `
                 <div class="w-64 bg-slate-900 text-slate-300 flex flex-col h-full border-r border-slate-800">
                     <div class="p-6 border-b border-slate-800">
@@ -257,6 +357,13 @@
                         <p class="text-xs text-slate-500 mt-1">AI-Powered AR Analysis</p>
                     </div>
                     <nav class="flex-1 p-4 space-y-2">${navHtml}</nav>
+                    
+                    <div class="p-4 border-t border-slate-800">
+                        <button onclick="window.showApiKeyModal(true)" class="flex items-center gap-3 px-4 py-3 w-full text-slate-400 hover:text-white transition-colors">
+                            <i data-lucide="key" width="20"></i>
+                            <span>API Key</span>
+                        </button>
+                    </div>
                 </div>
             `;
             lucide.createIcons();
@@ -534,7 +641,7 @@
                         notes
                     });
                 } catch (e) {
-                    alert("Error processing file");
+                    alert("Error processing file: " + e.message);
                 }
                 
                 state.isProcessingDoc = false;
@@ -545,8 +652,12 @@
         window.generateReport = async () => {
             state.isGeneratingReport = true;
             render();
-            const summary = await generateAuditSummary();
-            state.report = summary;
+            try {
+                const summary = await generateAuditSummary();
+                state.report = summary;
+            } catch (e) {
+                alert("Report Generation failed: " + e.message);
+            }
             state.isGeneratingReport = false;
             render();
         };
@@ -561,8 +672,12 @@
             input.value = '';
             render(); // update chat UI
 
-            const response = await chatWithAuditor(msg);
-            state.chatHistory.push({ role: 'model', text: response });
+            try {
+                const response = await chatWithAuditor(msg);
+                state.chatHistory.push({ role: 'model', text: response });
+            } catch (e) {
+                state.chatHistory.push({ role: 'model', text: "Error: " + e.message });
+            }
             state.isChatting = false;
             render();
         };
